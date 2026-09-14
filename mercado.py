@@ -17,12 +17,22 @@ import requests
 
 import db
 
-SGS = {"selic": 432, "cdi_mes": 4391, "poupanca_mes": 195, "ipca_mes": 433, "USD": 1, "EUR": 21619}
+# Séries do SGS (Banco Central):
+#   432  Meta Selic definida pelo Copom (% a.a.)      — diária
+#   4389 CDI anualizada base 252 (% a.a.)             — diária
+#   12   CDI diária (% a.d.)                          — diária (acumula o mês corrente)
+#   4391 CDI acumulada no mês (% a.m.)                — mensal (só sai no fechamento do mês)
+#   195  Poupança rendimento no mês (% a.m.)          — mensal
+#   433  IPCA variação mensal (%)                     — mensal
+#   1 / 21619  Dólar / Euro PTAX venda                — diária
+SGS = {"selic": 432, "cdi_aa": 4389, "cdi_dia": 12, "cdi_mes": 4391, "poupanca_mes": 195,
+       "ipca_mes": 433, "USD": 1, "EUR": 21619}
 
 # Indicadores que o usuario pode escolher para o painel do dashboard
 INDICES_DISPONIVEIS = {
     "selic": "Selic (meta, % a.a.)",
-    "cdi_mes": "CDI acumulado no mês",
+    "cdi_aa": "CDI (% a.a.)",
+    "cdi_mes": "CDI do mês (acumulado até hoje)",
     "poupanca_mes": "Poupança no mês",
     "ipca_mes": "IPCA do mês",
 }
@@ -35,39 +45,63 @@ TIMEOUT = 4
 # Sem internet, cada consulta esperaria o timeout inteiro — e o painel faz
 # varias. Depois de uma falha de rede, as chamadas seguintes pulam direto
 # para o cache/manual por 10 minutos.
-_ULTIMA_FALHA = {"quando": None}
+_ULTIMA_FALHA = {"quando": None, "erro": None}
 _PAUSA_APOS_FALHA = timedelta(minutes=10)
+# A API do BCB recusa (403) alguns clientes sem User-Agent "de navegador".
+HEADERS = {"User-Agent": "Mozilla/5.0 (ControleFinanceiro; +https://github.com) requests",
+           "Accept": "application/json"}
 
 
 class _SemRede(Exception):
     pass
 
 
+def resetar_falha():
+    """Zera a pausa apos falha (botao 'Atualizar cotacoes')."""
+    _ULTIMA_FALHA["quando"] = None
+
+
+def ultimo_erro():
+    return _ULTIMA_FALHA["erro"]
+
+
 def _get(url, **kw):
     q = _ULTIMA_FALHA["quando"]
     if q and datetime.now() - q < _PAUSA_APOS_FALHA:
-        raise _SemRede("rede indisponivel recentemente")
+        raise _SemRede(f"rede indisponivel recentemente ({_ULTIMA_FALHA['erro']})")
     try:
-        r = requests.get(url, timeout=TIMEOUT, **kw)
+        r = requests.get(url, timeout=TIMEOUT, headers=HEADERS, **kw)
         r.raise_for_status()
         return r
-    except requests.RequestException:
+    except requests.RequestException as e:
         _ULTIMA_FALHA["quando"] = datetime.now()
+        _ULTIMA_FALHA["erro"] = f"{datetime.now():%d/%m %H:%M} · {type(e).__name__}: {str(e)[:160]}"
         raise
 
 
+def _sgs_json(url):
+    dados = _get(url).json()
+    return [d for d in dados if d.get("valor") not in (None, "")]
+
+
 def _sgs(serie: int, dias: int = 40):
-    """Última observação de uma série do SGS: (valor, 'dd/mm/aaaa') ou None."""
-    fim = date.today()
-    ini = fim - timedelta(days=dias)
-    url = (f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{serie}/dados"
-           f"?formato=json&dataInicial={ini:%d/%m/%Y}&dataFinal={fim:%d/%m/%Y}")
-    r = _get(url)
-    dados = [d for d in r.json() if d.get("valor") not in (None, "")]
+    """Última observação de uma série do SGS: (valor, 'dd/mm/aaaa') ou None.
+
+    Usa o endpoint /ultimos/1 — nao depende de janela de datas, entao
+    devolve o valor VIGENTE mesmo para series que mudam raramente (a meta
+    Selic so tem observacao nova a cada reuniao do Copom).
+    """
+    dados = _sgs_json(f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{serie}/dados/ultimos/1?formato=json")
     if not dados:
         return None
     ult = dados[-1]
     return float(str(ult["valor"]).replace(",", ".")), ult["data"]
+
+
+def _sgs_periodo(serie: int, ini: date, fim: date):
+    url = (f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{serie}/dados"
+           f"?formato=json&dataInicial={ini:%d/%m/%Y}&dataFinal={fim:%d/%m/%Y}")
+    return _sgs_json(url)
 
 
 def _sgs_mes(serie: int, competencia: str):
@@ -75,10 +109,7 @@ def _sgs_mes(serie: int, competencia: str):
     y, m = int(competencia[:4]), int(competencia[5:7])
     ini = date(y, m, 1)
     fim = (date(y + (m // 12), m % 12 + 1, 1) - timedelta(days=1))
-    url = (f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{serie}/dados"
-           f"?formato=json&dataInicial={ini:%d/%m/%Y}&dataFinal={fim:%d/%m/%Y}")
-    r = _get(url)
-    dados = [d for d in r.json() if d.get("valor") not in (None, "")]
+    dados = _sgs_periodo(serie, ini, fim)
     if not dados:
         return None
     return float(str(dados[-1]["valor"]).replace(",", "."))
@@ -86,30 +117,71 @@ def _sgs_mes(serie: int, competencia: str):
 
 # ── Indicadores ─────────────────────────────────────────────────────────────
 def selic_atual():
-    """(% a.a., origem)."""
+    """Meta Selic vigente (% a.a.): (valor, origem)."""
     try:
-        v, d = _sgs(SGS["selic"], 60)
+        v, d = _sgs(SGS["selic"])
         db.set_cotacao("SELIC", v, origem=f"BCB {d}")
-        return v, f"BCB · {d}"
+        return v, f"BCB · vigente desde {d}"
     except Exception:
         v, d = db.get_cotacao("SELIC")
+        if v is not None:
+            return v, f"cache · {d}"
+        return db.get_config_float("selic_manual", db.get_config_float("cdi_anual_manual", 10.65)), "manual"
+
+
+def cdi_anual():
+    """CDI anualizado (% a.a., serie 4389): (valor, origem)."""
+    try:
+        v, d = _sgs(SGS["cdi_aa"])
+        db.set_cotacao("CDI_AA", v, origem=f"BCB {d}")
+        return v, f"BCB · {d}"
+    except Exception:
+        v, d = db.get_cotacao("CDI_AA")
         if v is not None:
             return v, f"cache · {d}"
         return db.get_config_float("cdi_anual_manual", 10.65), "manual"
 
 
+def _mes_fechado(competencia: str) -> bool:
+    return competencia < db.competencia_de(date.today())
+
+
 def cdi_mensal(competencia: str):
-    """CDI acumulado no mês em % (cache por competência; fallback = manual anualizado)."""
-    v = db.get_benchmark(competencia, "CDI")
-    if v is not None:
-        return v, "cache"
-    try:
-        v = _sgs_mes(SGS["cdi_mes"], competencia)
+    """CDI do mês em % a.m.: (valor, origem).
+
+    - Mês FECHADO: serie 4391 (acumulado no mês), gravada em cache definitivo.
+    - Mês CORRENTE: a 4391 ainda nao existe. Acumula a CDI diaria (serie 12)
+      do dia 1 ate hoje — e' o que a carteira de fato rendeu ate agora.
+      Se a diaria falhar, deriva do CDI anual (4389); por ultimo, do manual.
+    """
+    if _mes_fechado(competencia):
+        v = db.get_benchmark(competencia, "CDI")
         if v is not None:
-            db.set_benchmark(competencia, "CDI", v, "BCB")
             return v, "BCB"
-    except Exception:
-        pass
+        try:
+            v = _sgs_mes(SGS["cdi_mes"], competencia)
+            if v is not None:
+                db.set_benchmark(competencia, "CDI", v, "BCB")
+                return v, "BCB"
+        except Exception:
+            pass
+    else:
+        y, m = int(competencia[:4]), int(competencia[5:7])
+        try:
+            dados = _sgs_periodo(SGS["cdi_dia"], date(y, m, 1), date.today())
+            if dados:
+                fator = 1.0
+                for d in dados:
+                    fator *= 1 + float(str(d["valor"]).replace(",", ".")) / 100
+                return (fator - 1) * 100, f"BCB · acumulado até {dados[-1]['data']}"
+        except Exception:
+            pass
+        try:
+            aa, o = cdi_anual()
+            if "manual" not in o:
+                return ((1 + aa / 100) ** (1 / 12) - 1) * 100, f"≈ mensal do CDI {aa:.2f}% a.a."
+        except Exception:
+            pass
     anual = db.get_config_float("cdi_anual_manual", 10.65)
     return ((1 + anual / 100) ** (1 / 12) - 1) * 100, "manual"
 
@@ -206,6 +278,8 @@ def painel_mercado(indices=None, moedas=None, criptos=None) -> list[dict]:
     for ind in indices:
         if ind == "selic":
             v, o = selic_atual(); itens.append({"nome": "Selic (meta)", "valor": v, "fmt": "pct_aa", "origem": o})
+        elif ind == "cdi_aa":
+            v, o = cdi_anual(); itens.append({"nome": "CDI", "valor": v, "fmt": "pct_aa", "origem": o})
         elif ind == "cdi_mes":
             v, o = cdi_mensal(hoje); itens.append({"nome": "CDI do mês", "valor": v, "fmt": "pct_am", "origem": o})
         elif ind == "poupanca_mes":

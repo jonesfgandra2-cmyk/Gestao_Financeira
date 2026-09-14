@@ -57,6 +57,7 @@ TIPOS_INVESTIMENTO = {
 
 CONFIG_PADRAO = {
     "cdi_anual_manual": "10.65",     # % a.a. — usado se a API do BCB falhar
+    "selic_manual": "10.75",         # % a.a. — idem
     "poupanca_mensal_manual": "0.60",  # % a.m.
     "limite_baixo_rendimento": "70",   # % do CDI: abaixo disso = baixo rendimento
     "limite_oportunidade": "120",      # % do CDI: acima disso = destaque
@@ -64,7 +65,7 @@ CONFIG_PADRAO = {
     "alerta_cartao_pct_renda": "35",   # cartão acima disso da renda = alerta
     "usd_manual": "5.20", "eur_manual": "5.70",
     # painel de mercado do dashboard (o usuario escolhe em Configuracoes)
-    "painel_indices": "selic,cdi_mes",
+    "painel_indices": "selic,cdi_aa,cdi_mes",
     "painel_moedas": "USD,EUR",
     "painel_criptos": "BTC,ETH",
 }
