@@ -28,6 +28,52 @@ COR_GRUPO = {
 COR_MODALIDADE = {"Fixos": SERIES[6], "Cartão": SERIES[1], "Débito": SERIES[0]}
 
 
+# ── "R$ x ... R$ y" na mesma linha vira LaTeX no markdown do Streamlit ─────
+# O markdown interpreta `$...$` como fórmula: duas quantias na mesma frase
+# apareciam em fonte de código. Escapa o cifrão em tudo que renderiza
+# markdown (markdown, caption, alertas, progress, expander) — uma vez, aqui.
+def _esc(txt):
+    return txt.replace("R$", "R\\$") if isinstance(txt, str) and "R$" in txt else txt
+
+
+def _instalar_escape_moeda():
+    from streamlit.delta_generator import DeltaGenerator as DG
+
+    def _wrap_body(fn):
+        def w(self, body, *a, **k):
+            return fn(self, _esc(body), *a, **k)
+        w.__name__ = fn.__name__
+        return w
+
+    def _wrap_text(fn):
+        def w(self, *a, **k):
+            if "text" in k:
+                k["text"] = _esc(k["text"])
+            return fn(self, *a, **k)
+        w.__name__ = fn.__name__
+        return w
+
+    def _wrap_label(fn):
+        def w(self, label, *a, **k):
+            return fn(self, _esc(label), *a, **k)
+        w.__name__ = fn.__name__
+        return w
+
+    for nome in ("markdown", "caption", "success", "info", "warning", "error"):
+        setattr(DG, nome, _wrap_body(getattr(DG, nome)))
+        setattr(st, nome, getattr(st._main, nome))
+    DG.progress = _wrap_text(DG.progress)
+    st.progress = st._main.progress
+    DG.expander = _wrap_label(DG.expander)
+    st.expander = st._main.expander
+
+
+try:
+    _instalar_escape_moeda()
+except Exception:
+    pass
+
+
 def brl(v, casas=2) -> str:
     try:
         v = float(v or 0)

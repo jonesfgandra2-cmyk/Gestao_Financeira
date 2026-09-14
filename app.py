@@ -5,7 +5,7 @@ Execute:  streamlit run app.py
 import streamlit as st
 
 import db
-from modulos import (configuracoes, creditos, dashboard, gastos, investimentos,
+from modulos import (configuracoes, creditos, dashboard, gastos, investimentos, ir,
                      planejamento)
 
 st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="wide",
@@ -69,6 +69,7 @@ PAGINAS = [
     ("Gastos", "🧾", gastos.render, "Movimento"),
     ("Planejamento futuro", "🎯", planejamento.render, "Futuro"),
     ("Investimentos", "📈", investimentos.render, "Futuro"),
+    ("Imposto de Renda", "🧾", ir.render, "Obrigações"),
     ("Configurações", "⚙️", configuracoes.render, "Sistema"),
 ]
 
