@@ -1,0 +1,156 @@
+"""Cotações e indicadores de mercado, com cache no SQLite e fallback manual.
+
+Fontes (todas públicas, sem chave):
+  - Banco Central (SGS): Selic meta (432), CDI acumulado no mês (4391),
+    poupança mensal (195), dólar PTAX venda (1), euro PTAX venda (21619).
+  - CoinGecko: criptomoedas em BRL.
+
+Toda função devolve algo mesmo sem internet: usa o último valor guardado
+no banco ou o valor manual das configurações. A origem vem junto para a
+tela poder dizer de onde o número saiu.
+"""
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta
+
+import requests
+
+import db
+
+SGS = {"selic": 432, "cdi_mes": 4391, "poupanca_mes": 195, "USD": 1, "EUR": 21619}
+CRYPTO_IDS = {"BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "BNB": "binancecoin",
+              "XRP": "ripple", "ADA": "cardano", "USDT": "tether", "USDC": "usd-coin",
+              "DOGE": "dogecoin", "DOT": "polkadot", "LTC": "litecoin", "MATIC": "matic-network"}
+TIMEOUT = 6
+
+
+def _sgs(serie: int, dias: int = 40):
+    """Última observação de uma série do SGS: (valor, 'dd/mm/aaaa') ou None."""
+    fim = date.today()
+    ini = fim - timedelta(days=dias)
+    url = (f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{serie}/dados"
+           f"?formato=json&dataInicial={ini:%d/%m/%Y}&dataFinal={fim:%d/%m/%Y}")
+    r = requests.get(url, timeout=TIMEOUT)
+    r.raise_for_status()
+    dados = [d for d in r.json() if d.get("valor") not in (None, "")]
+    if not dados:
+        return None
+    ult = dados[-1]
+    return float(str(ult["valor"]).replace(",", ".")), ult["data"]
+
+
+def _sgs_mes(serie: int, competencia: str):
+    """Valor da série para um mês específico (séries mensais como CDI/poupança)."""
+    y, m = int(competencia[:4]), int(competencia[5:7])
+    ini = date(y, m, 1)
+    fim = (date(y + (m // 12), m % 12 + 1, 1) - timedelta(days=1))
+    url = (f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{serie}/dados"
+           f"?formato=json&dataInicial={ini:%d/%m/%Y}&dataFinal={fim:%d/%m/%Y}")
+    r = requests.get(url, timeout=TIMEOUT)
+    r.raise_for_status()
+    dados = [d for d in r.json() if d.get("valor") not in (None, "")]
+    if not dados:
+        return None
+    return float(str(dados[-1]["valor"]).replace(",", "."))
+
+
+# ── Indicadores ─────────────────────────────────────────────────────────────
+def selic_atual():
+    """(% a.a., origem)."""
+    try:
+        v, d = _sgs(SGS["selic"], 60)
+        db.set_cotacao("SELIC", v, origem=f"BCB {d}")
+        return v, f"BCB · {d}"
+    except Exception:
+        v, d = db.get_cotacao("SELIC")
+        if v is not None:
+            return v, f"cache · {d}"
+        return db.get_config_float("cdi_anual_manual", 10.65), "manual"
+
+
+def cdi_mensal(competencia: str):
+    """CDI acumulado no mês em % (cache por competência; fallback = manual anualizado)."""
+    v = db.get_benchmark(competencia, "CDI")
+    if v is not None:
+        return v, "cache"
+    try:
+        v = _sgs_mes(SGS["cdi_mes"], competencia)
+        if v is not None:
+            db.set_benchmark(competencia, "CDI", v, "BCB")
+            return v, "BCB"
+    except Exception:
+        pass
+    anual = db.get_config_float("cdi_anual_manual", 10.65)
+    return ((1 + anual / 100) ** (1 / 12) - 1) * 100, "manual"
+
+
+def poupanca_mensal(competencia: str):
+    v = db.get_benchmark(competencia, "POUPANCA")
+    if v is not None:
+        return v, "cache"
+    try:
+        v = _sgs_mes(SGS["poupanca_mes"], competencia)
+        if v is not None:
+            db.set_benchmark(competencia, "POUPANCA", v, "BCB")
+            return v, "BCB"
+    except Exception:
+        pass
+    return db.get_config_float("poupanca_mensal_manual", 0.6), "manual"
+
+
+# ── Moedas e cripto ─────────────────────────────────────────────────────────
+def cotacao_moeda(codigo: str):
+    """USD ou EUR em BRL: (valor, origem)."""
+    codigo = codigo.upper()
+    try:
+        v, d = _sgs(SGS[codigo], 15)
+        db.set_cotacao(codigo, v, origem=f"BCB PTAX {d}")
+        return v, f"PTAX · {d}"
+    except Exception:
+        v, d = db.get_cotacao(codigo)
+        if v is not None:
+            return v, f"cache · {d}"
+        return db.get_config_float(f"{codigo.lower()}_manual", 5.0), "manual"
+
+
+def cotacao_cripto(codigo: str):
+    """Cripto em BRL via CoinGecko: (valor, origem)."""
+    codigo = codigo.upper()
+    cid = CRYPTO_IDS.get(codigo, codigo.lower())
+    try:
+        r = requests.get("https://api.coingecko.com/api/v3/simple/price",
+                         params={"ids": cid, "vs_currencies": "brl"}, timeout=TIMEOUT)
+        r.raise_for_status()
+        v = float(r.json()[cid]["brl"])
+        db.set_cotacao(codigo, v, origem="CoinGecko")
+        return v, f"CoinGecko · {datetime.now():%d/%m %H:%M}"
+    except Exception:
+        v, d = db.get_cotacao(codigo)
+        if v is not None:
+            return v, f"cache · {d}"
+        return None, "sem cotação"
+
+
+def cotacao(codigo: str, moeda: str):
+    if moeda in ("USD", "EUR"):
+        return cotacao_moeda(moeda)
+    if moeda == "CRYPTO":
+        return cotacao_cripto(codigo or "BTC")
+    return 1.0, "BRL"
+
+
+def painel_mercado(criptos=("BTC", "ETH")) -> list[dict]:
+    """Lista de indicadores para o dashboard: [{nome, valor, fmt, origem}]."""
+    itens = []
+    s, o = selic_atual()
+    itens.append({"nome": "Selic (meta)", "valor": s, "fmt": "pct_aa", "origem": o})
+    c, o = cdi_mensal(db.competencia_de(date.today()))
+    itens.append({"nome": "CDI do mês", "valor": c, "fmt": "pct_am", "origem": o})
+    for m in ("USD", "EUR"):
+        v, o = cotacao_moeda(m)
+        itens.append({"nome": "Dólar" if m == "USD" else "Euro", "valor": v, "fmt": "brl", "origem": o})
+    for cr in criptos:
+        v, o = cotacao_cripto(cr)
+        if v is not None:
+            itens.append({"nome": cr, "valor": v, "fmt": "brl0", "origem": o})
+    return itens

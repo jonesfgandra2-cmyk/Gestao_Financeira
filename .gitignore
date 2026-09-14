@@ -1,0 +1,6 @@
+# banco local — nunca versionar dados pessoais
+data/*.db
+data/*.db-journal
+__pycache__/
+*.pyc
+.venv/
