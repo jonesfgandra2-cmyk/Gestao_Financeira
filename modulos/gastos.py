@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import db
+from modulos import importar
 from utils import (COR_GRUPO, SERIES, brl, fig_show, kpi, rotulo_comp, rotulo_comp_longo,
                    seletor_competencia)
 
@@ -28,13 +29,16 @@ def render():
         cor = "#008300" if r["saldo"] >= 0 else "#e34948"
         kpi("Sobra do mês", brl(r["saldo"]), f"créditos {brl(r['creditos'])}", cor)
 
-    aba_fix, aba_cartao, aba_deb = st.tabs(["🏠 Fixos", "💳 Cartão de crédito", "🏦 Débito"])
+    aba_fix, aba_cartao, aba_deb, aba_imp = st.tabs(
+        ["🏠 Fixos", "💳 Cartão de crédito", "🏦 Débito", "📥 Importar planilha"])
     with aba_fix:
         _fixos(comp)
     with aba_cartao:
         _lancamentos(comp, "CARTAO")
     with aba_deb:
         _lancamentos(comp, "DEBITO")
+    with aba_imp:
+        importar.render()
 
 
 # ── Fixos ───────────────────────────────────────────────────────────────────

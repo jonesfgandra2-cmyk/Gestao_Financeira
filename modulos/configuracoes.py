@@ -2,13 +2,14 @@
 import streamlit as st
 
 import db
+import mercado
 from utils import brl
 
 
 def render():
     st.title("⚙️ Configurações")
     abas = st.tabs(["🏠 Gastos fixos", "🏷 Categorias", "💳 Cartões", "💵 Tipos de crédito",
-                    "📐 Parâmetros", "👤 Usuários"])
+                    "📡 Cotações", "📐 Parâmetros", "👤 Usuários"])
     with abas[0]:
         _fixos()
     with abas[1]:
@@ -18,28 +19,83 @@ def render():
     with abas[3]:
         _tipos_credito()
     with abas[4]:
-        _parametros()
+        _cotacoes()
     with abas[5]:
+        _parametros()
+    with abas[6]:
         _usuarios()
 
 
+def _cotacoes():
+    st.caption("Escolha o que aparece no painel de mercado do dashboard. "
+               "Índices e moedas vêm do Banco Central; criptomoedas do CoinGecko.")
+    ind_atual = [x for x in (db.get_config("painel_indices", "") or "").split(",") if x]
+    moe_atual = [x for x in (db.get_config("painel_moedas", "") or "").split(",") if x]
+    cri_atual = [x for x in (db.get_config("painel_criptos", "") or "").split(",") if x]
+    with st.form("cfg_cotacoes"):
+        ind = st.multiselect("Taxas e índices", list(mercado.INDICES_DISPONIVEIS),
+                             default=[i for i in ind_atual if i in mercado.INDICES_DISPONIVEIS],
+                             format_func=lambda k: mercado.INDICES_DISPONIVEIS[k])
+        moe = st.multiselect("Moedas", list(mercado.MOEDAS_DISPONIVEIS),
+                             default=[m for m in moe_atual if m in mercado.MOEDAS_DISPONIVEIS],
+                             format_func=lambda k: mercado.MOEDAS_DISPONIVEIS[k])
+        conhecidas = list(mercado.CRYPTO_IDS)
+        cri = st.multiselect("Criptomoedas", conhecidas,
+                             default=[c for c in cri_atual if c in conhecidas])
+        outras = st.text_input("Outras criptos (id do CoinGecko, separados por vírgula)",
+                               value=",".join(c for c in cri_atual if c not in conhecidas),
+                               placeholder="ex.: avalanche-2, chainlink")
+        if st.form_submit_button("Salvar painel", type="primary"):
+            extras = [x.strip() for x in outras.split(",") if x.strip()]
+            db.set_config("painel_indices", ",".join(ind))
+            db.set_config("painel_moedas", ",".join(moe))
+            db.set_config("painel_criptos", ",".join(cri + extras))
+            st.success("Painel salvo. O dashboard já mostra a nova seleção.")
+    st.markdown("**Prévia**")
+    itens = mercado.painel_mercado()
+    if not itens:
+        st.info("Nada selecionado.")
+    else:
+        cols = st.columns(max(1, min(6, len(itens))))
+        for i, it in enumerate(itens):
+            v = it["valor"]
+            txt = "—" if v is None else (f"{v:.2f}%".replace(".", ",") if it["fmt"].startswith("pct") else brl(v))
+            cols[i % len(cols)].metric(it["nome"], txt, help=it["origem"])
+
+
 def _fixos():
-    st.caption("Os fixos aparecem todo mês na aba Gastos com o valor previsto; você ajusta e marca como pago.")
+    st.caption("Os fixos aparecem todo mês na aba Gastos com o valor previsto; você ajusta e marca como pago. "
+               "Edite direto na tabela (nome, valor previsto, **dia de vencimento**, ativo) e clique em Salvar.")
     with st.form("cfg_fixo", clear_on_submit=True):
         a, b, c, d = st.columns([2, 1, 1, 1])
-        nome = a.text_input("Nome da conta")
+        nome = a.text_input("Nova conta fixa")
         val = b.number_input("Valor previsto", min_value=0.0, step=10.0, format="%.2f")
         dia = c.number_input("Dia de vencimento", min_value=1, max_value=31, value=10)
-        if d.form_submit_button("Salvar", width="stretch") and nome.strip():
+        if d.form_submit_button("Adicionar", width="stretch") and nome.strip():
             db.add_fixo_tipo(nome, val, int(dia)); st.rerun()
+
     df = db.fixos_tipos(ativos=False)
-    for _, x in df.iterrows():
-        a, b, c, d = st.columns([2, 1, 1, 1])
-        a.markdown(("~~" if not x["ativo"] else "") + f"**{x['nome']}**" + ("~~" if not x["ativo"] else ""))
-        b.markdown(brl(x["valor_previsto"]))
-        c.markdown(f"dia {int(x['dia_vencimento'])}")
-        if d.button("Desativar" if x["ativo"] else "Reativar", key=f"fx_at_{x['id']}"):
-            db.set_fixo_tipo_ativo(int(x["id"]), not x["ativo"]); st.rerun()
+    if df.empty:
+        st.info("Nenhuma conta fixa cadastrada.")
+        return
+    ed = st.data_editor(
+        df[["id", "nome", "valor_previsto", "dia_vencimento", "ativo"]].assign(ativo=lambda d: d["ativo"] == 1),
+        hide_index=True, width="stretch", key="editor_fixos",
+        column_config={
+            "id": None,
+            "nome": st.column_config.TextColumn("Conta", required=True),
+            "valor_previsto": st.column_config.NumberColumn("Valor previsto", format="R$ %.2f", min_value=0.0, step=10.0),
+            "dia_vencimento": st.column_config.NumberColumn("Dia de vencimento", min_value=1, max_value=31, step=1),
+            "ativo": st.column_config.CheckboxColumn("Ativo"),
+        },
+        num_rows="fixed")
+    if st.button("💾 Salvar alterações", type="primary", key="salvar_fixos_cfg"):
+        n = 0
+        for _, r in ed.iterrows():
+            db.atualizar_fixo_tipo(r["id"], r["nome"], r["valor_previsto"], r["dia_vencimento"], r["ativo"])
+            n += 1
+        st.success(f"{n} conta(s) atualizada(s).")
+        st.rerun()
 
 
 def _categorias():

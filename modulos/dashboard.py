@@ -11,6 +11,13 @@ from utils import (COR_GRUPO, COR_MODALIDADE, SERIES, STATUS, badge, brl, fig_sh
                    rotulo_comp, rotulo_comp_longo, seletor_competencia)
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def _painel_mercado_cache(ind, moe, cri):
+    """Cotacoes memorizadas por 15 min (a chave e' a selecao do usuario);
+    sem isto cada clique no dashboard iria a internet de novo."""
+    return mercado.painel_mercado()
+
+
 def _score(r, r_ant, gastos_cat, patrimonio, meta_sobra, alerta_cartao):
     """0–100 a partir de quatro sinais simples e explicáveis."""
     pontos, motivos = 0, []
@@ -55,11 +62,16 @@ def render():
 
     # ── Mercado ─────────────────────────────────────────────────────────
     with st.container(border=True):
-        itens = mercado.painel_mercado(criptos=_criptos_da_carteira())
-        cols = st.columns(len(itens))
+        itens = _painel_mercado_cache(db.get_config("painel_indices", ""), db.get_config("painel_moedas", ""),
+                                      db.get_config("painel_criptos", ""))
+        if not itens:
+            st.caption("Nenhuma cotação selecionada — escolha em Configurações → Cotações.")
+        cols = st.columns(max(1, len(itens)))
         for col, it in zip(cols, itens):
             v = it["valor"]
-            if it["fmt"] == "pct_aa":
+            if v is None:
+                txt = "—"
+            elif it["fmt"] == "pct_aa":
                 txt = pct(v, 2) + " a.a."
             elif it["fmt"] == "pct_am":
                 txt = pct(v, 2) + " a.m."
@@ -251,9 +263,3 @@ def render():
                                    fill="tozeroy", fillcolor="rgba(27,175,122,.12)",
                                    hovertemplate="%{x}<br>R$ %{y:,.2f}<extra></extra>"))
         fig_show(fig, 260)
-
-
-def _criptos_da_carteira():
-    df = db.query("SELECT DISTINCT ativo_codigo FROM investimentos WHERE moeda='CRYPTO' AND ativo=1 AND ativo_codigo IS NOT NULL")
-    cods = [c for c in df["ativo_codigo"].tolist() if c]
-    return tuple(cods[:3]) if cods else ("BTC", "ETH")
