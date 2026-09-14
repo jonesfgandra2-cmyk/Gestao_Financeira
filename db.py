@@ -63,6 +63,10 @@ CONFIG_PADRAO = {
     "meta_taxa_poupanca": "20",        # % da renda que deveria sobrar
     "alerta_cartao_pct_renda": "35",   # cartão acima disso da renda = alerta
     "usd_manual": "5.20", "eur_manual": "5.70",
+    # painel de mercado do dashboard (o usuario escolhe em Configuracoes)
+    "painel_indices": "selic,cdi_mes",
+    "painel_moedas": "USD,EUR",
+    "painel_criptos": "BTC,ETH",
 }
 
 SCHEMA = """

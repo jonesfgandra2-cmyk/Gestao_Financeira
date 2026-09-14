@@ -30,16 +30,16 @@ No primeiro acesso o sistema pede para criar o usuário administrador.
 | **Gastos** | **Fixos** (Aluguel, Energia, Gás, Internet, Carona, Fatura Vivo, Crossfit, Pós, Seguro — já cadastrados; valor previsto, marcar pago). **Cartão de crédito** com cadastro de cartões (dia de fechamento/vencimento/limite), compra parcelada gera as parcelas nas faturas seguintes, visão por fatura e comprometido futuro. **Débito/Pix**. Todo lançamento tem modalidade → categoria (ex.: Alimentação/Lazer → Ifood; Despesa Casa → Coopercica; Transporte → Combustível; Compras Diversas → Enjoei). |
 | **Planejamento futuro** | Objetivos (viagem, troca de carro, casa, celular...), valor alvo, prazo, prioridade, aportes e quanto guardar por mês para chegar lá. |
 | **Investimentos** | Cadastro por tipo (CDB, Tesouro, LCI/LCA, fundos, ações, FII, **cripto, dólar, euro**...). Lançamento mês a mês (aporte, resgate, saldo; para cripto/moeda: quantidade + cotação, com saldo calculado automaticamente). Rendimento e rentabilidade por mês, comparação com **CDI e poupança**, rótulos de *baixo rendimento* / *destaque*. Metas de aporte mensal, anual e patrimônio em X anos (com o aporte mensal necessário). |
-| **Configurações** | Fixos, categorias/modalidades, cartões, tipos de crédito, parâmetros (limites de alerta, valores manuais de CDI/dólar/euro), usuários e senha. |
+| **Configurações** | Fixos, categorias/modalidades, cartões, tipos de crédito, **cotações do painel**, parâmetros (limites de alerta, valores manuais de CDI/dólar/euro), usuários e senha. |
 
 ## Cotações e índices
 
 Buscados automaticamente, sem chave de API, e guardados no banco:
 
-- **Banco Central (SGS):** Selic meta, CDI acumulado no mês, poupança mensal, dólar e euro PTAX.
+- **Banco Central (SGS):** Selic meta, CDI acumulado no mês, poupança mensal, IPCA do mês, dólar e euro PTAX.
 - **CoinGecko:** criptomoedas em BRL (BTC, ETH, SOL, BNB, XRP, ADA, USDT, USDC, DOGE, DOT, LTC, MATIC — outros pelo id do CoinGecko).
 
-Sem internet, o sistema usa o último valor guardado ou os valores manuais de **Configurações → Parâmetros**. A origem de cada número aparece embaixo dele.
+Você escolhe **o que aparece no painel** em **Configurações → Cotações** (quais taxas, quais moedas, quais criptos — inclusive outras pelo id do CoinGecko). Sem internet, o sistema usa o último valor guardado ou os valores manuais de **Configurações → Parâmetros**; a origem de cada número aparece embaixo dele. As cotações ficam em cache por 15 minutos.
 
 ## Como o cartão funciona
 

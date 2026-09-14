@@ -17,11 +17,43 @@ import requests
 
 import db
 
-SGS = {"selic": 432, "cdi_mes": 4391, "poupanca_mes": 195, "USD": 1, "EUR": 21619}
+SGS = {"selic": 432, "cdi_mes": 4391, "poupanca_mes": 195, "ipca_mes": 433, "USD": 1, "EUR": 21619}
+
+# Indicadores que o usuario pode escolher para o painel do dashboard
+INDICES_DISPONIVEIS = {
+    "selic": "Selic (meta, % a.a.)",
+    "cdi_mes": "CDI acumulado no mês",
+    "poupanca_mes": "Poupança no mês",
+    "ipca_mes": "IPCA do mês",
+}
+MOEDAS_DISPONIVEIS = {"USD": "Dólar (PTAX)", "EUR": "Euro (PTAX)"}
 CRYPTO_IDS = {"BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "BNB": "binancecoin",
               "XRP": "ripple", "ADA": "cardano", "USDT": "tether", "USDC": "usd-coin",
               "DOGE": "dogecoin", "DOT": "polkadot", "LTC": "litecoin", "MATIC": "matic-network"}
-TIMEOUT = 6
+TIMEOUT = 4
+
+# Sem internet, cada consulta esperaria o timeout inteiro — e o painel faz
+# varias. Depois de uma falha de rede, as chamadas seguintes pulam direto
+# para o cache/manual por 10 minutos.
+_ULTIMA_FALHA = {"quando": None}
+_PAUSA_APOS_FALHA = timedelta(minutes=10)
+
+
+class _SemRede(Exception):
+    pass
+
+
+def _get(url, **kw):
+    q = _ULTIMA_FALHA["quando"]
+    if q and datetime.now() - q < _PAUSA_APOS_FALHA:
+        raise _SemRede("rede indisponivel recentemente")
+    try:
+        r = requests.get(url, timeout=TIMEOUT, **kw)
+        r.raise_for_status()
+        return r
+    except requests.RequestException:
+        _ULTIMA_FALHA["quando"] = datetime.now()
+        raise
 
 
 def _sgs(serie: int, dias: int = 40):
@@ -30,8 +62,7 @@ def _sgs(serie: int, dias: int = 40):
     ini = fim - timedelta(days=dias)
     url = (f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{serie}/dados"
            f"?formato=json&dataInicial={ini:%d/%m/%Y}&dataFinal={fim:%d/%m/%Y}")
-    r = requests.get(url, timeout=TIMEOUT)
-    r.raise_for_status()
+    r = _get(url)
     dados = [d for d in r.json() if d.get("valor") not in (None, "")]
     if not dados:
         return None
@@ -46,8 +77,7 @@ def _sgs_mes(serie: int, competencia: str):
     fim = (date(y + (m // 12), m % 12 + 1, 1) - timedelta(days=1))
     url = (f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{serie}/dados"
            f"?formato=json&dataInicial={ini:%d/%m/%Y}&dataFinal={fim:%d/%m/%Y}")
-    r = requests.get(url, timeout=TIMEOUT)
-    r.raise_for_status()
+    r = _get(url)
     dados = [d for d in r.json() if d.get("valor") not in (None, "")]
     if not dados:
         return None
@@ -98,6 +128,25 @@ def poupanca_mensal(competencia: str):
     return db.get_config_float("poupanca_mensal_manual", 0.6), "manual"
 
 
+def ipca_mensal(competencia: str):
+    v = db.get_benchmark(competencia, "IPCA")
+    if v is not None:
+        return v, "cache"
+    try:
+        v = _sgs_mes(SGS["ipca_mes"], competencia)
+        if v is not None:
+            db.set_benchmark(competencia, "IPCA", v, "IBGE/BCB")
+            return v, "IBGE/BCB"
+    except Exception:
+        pass
+    # IPCA do mes corrente so sai no mes seguinte: mostra o ultimo conhecido
+    try:
+        v, d = _sgs(SGS["ipca_mes"], 70)
+        return v, f"último · {d}"
+    except Exception:
+        return None, "sem dado"
+
+
 # ── Moedas e cripto ─────────────────────────────────────────────────────────
 def cotacao_moeda(codigo: str):
     """USD ou EUR em BRL: (valor, origem)."""
@@ -118,9 +167,8 @@ def cotacao_cripto(codigo: str):
     codigo = codigo.upper()
     cid = CRYPTO_IDS.get(codigo, codigo.lower())
     try:
-        r = requests.get("https://api.coingecko.com/api/v3/simple/price",
-                         params={"ids": cid, "vs_currencies": "brl"}, timeout=TIMEOUT)
-        r.raise_for_status()
+        r = _get("https://api.coingecko.com/api/v3/simple/price",
+                 params={"ids": cid, "vs_currencies": "brl"})
         v = float(r.json()[cid]["brl"])
         db.set_cotacao(codigo, v, origem="CoinGecko")
         return v, f"CoinGecko · {datetime.now():%d/%m %H:%M}"
@@ -139,18 +187,41 @@ def cotacao(codigo: str, moeda: str):
     return 1.0, "BRL"
 
 
-def painel_mercado(criptos=("BTC", "ETH")) -> list[dict]:
-    """Lista de indicadores para o dashboard: [{nome, valor, fmt, origem}]."""
+def _lista_config(chave, padrao):
+    v = db.get_config(chave, padrao) or ""
+    return [x.strip().upper() if chave != "painel_indices" else x.strip().lower()
+            for x in str(v).split(",") if x.strip()]
+
+
+def painel_mercado(indices=None, moedas=None, criptos=None) -> list[dict]:
+    """Lista de indicadores para o dashboard: [{nome, valor, fmt, origem}].
+
+    Sem argumentos, usa a escolha feita em Configuracoes -> Cotacoes.
+    """
+    indices = _lista_config("painel_indices", "selic,cdi_mes") if indices is None else list(indices)
+    moedas = _lista_config("painel_moedas", "USD,EUR") if moedas is None else list(moedas)
+    criptos = _lista_config("painel_criptos", "BTC,ETH") if criptos is None else list(criptos)
+    hoje = db.competencia_de(date.today())
     itens = []
-    s, o = selic_atual()
-    itens.append({"nome": "Selic (meta)", "valor": s, "fmt": "pct_aa", "origem": o})
-    c, o = cdi_mensal(db.competencia_de(date.today()))
-    itens.append({"nome": "CDI do mês", "valor": c, "fmt": "pct_am", "origem": o})
-    for m in ("USD", "EUR"):
-        v, o = cotacao_moeda(m)
-        itens.append({"nome": "Dólar" if m == "USD" else "Euro", "valor": v, "fmt": "brl", "origem": o})
+    for ind in indices:
+        if ind == "selic":
+            v, o = selic_atual(); itens.append({"nome": "Selic (meta)", "valor": v, "fmt": "pct_aa", "origem": o})
+        elif ind == "cdi_mes":
+            v, o = cdi_mensal(hoje); itens.append({"nome": "CDI do mês", "valor": v, "fmt": "pct_am", "origem": o})
+        elif ind == "poupanca_mes":
+            v, o = poupanca_mensal(hoje); itens.append({"nome": "Poupança", "valor": v, "fmt": "pct_am", "origem": o})
+        elif ind == "ipca_mes":
+            v, o = ipca_mensal(hoje)
+            if v is not None:
+                itens.append({"nome": "IPCA", "valor": v, "fmt": "pct_am", "origem": o})
+    for m in moedas:
+        if m in MOEDAS_DISPONIVEIS:
+            v, o = cotacao_moeda(m)
+            itens.append({"nome": "Dólar" if m == "USD" else "Euro", "valor": v, "fmt": "brl", "origem": o})
     for cr in criptos:
         v, o = cotacao_cripto(cr)
         if v is not None:
-            itens.append({"nome": cr, "valor": v, "fmt": "brl0", "origem": o})
+            itens.append({"nome": cr, "valor": v, "fmt": "brl0" if v >= 100 else "brl", "origem": o})
+        else:
+            itens.append({"nome": cr, "valor": None, "fmt": "brl", "origem": o})
     return itens
