@@ -65,7 +65,7 @@ CONFIG_PADRAO = {
     "alerta_cartao_pct_renda": "35",   # cartão acima disso da renda = alerta
     "usd_manual": "5.20", "eur_manual": "5.70",
     # painel de mercado do dashboard (o usuario escolhe em Configuracoes)
-    "painel_indices": "selic,cdi_aa,cdi_mes",
+    "painel_indices": "selic_efetiva,cdi_aa,cdi_mes",
     "painel_moedas": "USD,EUR",
     "painel_criptos": "BTC,ETH",
 }
@@ -212,6 +212,10 @@ def iniciar_banco():
             c.execute("INSERT OR IGNORE INTO categorias (grupo, nome) VALUES (?,?)", (grupo, nome))
         for k, v in CONFIG_PADRAO.items():
             c.execute("INSERT OR IGNORE INTO config (chave, valor) VALUES (?,?)", (k, v))
+        # Bancos criados com o painel padrao antigo passam para o novo (Selic
+        # efetiva em vez da meta). Quem personalizou o painel nao e' tocado.
+        c.execute("UPDATE config SET valor=? WHERE chave='painel_indices' AND valor IN (?,?)",
+                  (CONFIG_PADRAO["painel_indices"], "selic,cdi_mes", "selic,cdi_aa,cdi_mes"))
 
 
 # ── Config ──────────────────────────────────────────────────────────────────

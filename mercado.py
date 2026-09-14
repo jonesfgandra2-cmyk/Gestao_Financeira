@@ -25,12 +25,15 @@ import db
 #   195  Poupança rendimento no mês (% a.m.)          — mensal
 #   433  IPCA variação mensal (%)                     — mensal
 #   1 / 21619  Dólar / Euro PTAX venda                — diária
-SGS = {"selic": 432, "cdi_aa": 4389, "cdi_dia": 12, "cdi_mes": 4391, "poupanca_mes": 195,
-       "ipca_mes": 433, "USD": 1, "EUR": 21619}
+#   1178 Selic EFETIVA anualizada base 252 (% a.a.)   — diária (a taxa realizada, ~0,10 abaixo da meta)
+#   4390 Selic acumulada no mês (% a.m.)              — mensal
+SGS = {"selic": 432, "selic_efetiva": 1178, "cdi_aa": 4389, "cdi_dia": 12, "cdi_mes": 4391,
+       "poupanca_mes": 195, "ipca_mes": 433, "USD": 1, "EUR": 21619}
 
 # Indicadores que o usuario pode escolher para o painel do dashboard
 INDICES_DISPONIVEIS = {
-    "selic": "Selic (meta, % a.a.)",
+    "selic_efetiva": "Selic efetiva (realizada, % a.a.)",
+    "selic": "Selic meta (Copom, % a.a.)",
     "cdi_aa": "CDI (% a.a.)",
     "cdi_mes": "CDI do mês (acumulado até hoje)",
     "poupanca_mes": "Poupança no mês",
@@ -129,6 +132,19 @@ def selic_atual():
         return db.get_config_float("selic_manual", db.get_config_float("cdi_anual_manual", 10.65)), "manual"
 
 
+def selic_efetiva():
+    """Selic efetiva (over) anualizada, serie 1178 — a taxa realizada no dia."""
+    try:
+        v, d = _sgs(SGS["selic_efetiva"])
+        db.set_cotacao("SELIC_EF", v, origem=f"BCB {d}")
+        return v, f"BCB · {d}"
+    except Exception:
+        v, d = db.get_cotacao("SELIC_EF")
+        if v is not None:
+            return v, f"cache · {d}"
+        return db.get_config_float("selic_manual", 10.75), "manual"
+
+
 def cdi_anual():
     """CDI anualizado (% a.a., serie 4389): (valor, origem)."""
     try:
@@ -173,7 +189,7 @@ def cdi_mensal(competencia: str):
                 fator = 1.0
                 for d in dados:
                     fator *= 1 + float(str(d["valor"]).replace(",", ".")) / 100
-                return (fator - 1) * 100, f"BCB · acumulado até {dados[-1]['data']}"
+                return (fator - 1) * 100, f"BCB · {len(dados)} dia(s) útil(eis) até {dados[-1]['data']}"
         except Exception:
             pass
         try:
@@ -276,8 +292,10 @@ def painel_mercado(indices=None, moedas=None, criptos=None) -> list[dict]:
     hoje = db.competencia_de(date.today())
     itens = []
     for ind in indices:
-        if ind == "selic":
-            v, o = selic_atual(); itens.append({"nome": "Selic (meta)", "valor": v, "fmt": "pct_aa", "origem": o})
+        if ind == "selic_efetiva":
+            v, o = selic_efetiva(); itens.append({"nome": "Selic efetiva", "valor": v, "fmt": "pct_aa", "origem": o})
+        elif ind == "selic":
+            v, o = selic_atual(); itens.append({"nome": "Selic meta", "valor": v, "fmt": "pct_aa", "origem": o})
         elif ind == "cdi_aa":
             v, o = cdi_anual(); itens.append({"nome": "CDI", "valor": v, "fmt": "pct_aa", "origem": o})
         elif ind == "cdi_mes":
