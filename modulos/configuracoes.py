@@ -51,6 +51,25 @@ def _cotacoes():
             db.set_config("painel_moedas", ",".join(moe))
             db.set_config("painel_criptos", ",".join(cri + extras))
             st.success("Painel salvo. O dashboard já mostra a nova seleção.")
+    st.markdown("**Conexão com as fontes**")
+    c1, c2 = st.columns([1, 3])
+    if c1.button("🔄 Testar agora", key="cfg_testar_cot"):
+        mercado.resetar_falha()
+        try:
+            v, d = mercado._sgs(mercado.SGS["selic"])
+            c2.success(f"Banco Central respondeu: Selic {v:.2f}% a.a. (vigente desde {d}).")
+        except Exception as e:
+            c2.error(f"Banco Central não respondeu: {type(e).__name__}: {str(e)[:200]}")
+        try:
+            v, o = mercado.cotacao_cripto("BTC")
+            c2.info(f"CoinGecko: BTC {brl(v) if v else '—'} ({o}).")
+        except Exception as e:
+            c2.error(f"CoinGecko não respondeu: {e}")
+    erro = mercado.ultimo_erro()
+    if erro:
+        st.caption(f"Última falha de rede registrada: {erro}. Depois de uma falha o sistema espera 10 min "
+                   "antes de tentar de novo — o botão acima força a tentativa.")
+
     st.markdown("**Prévia**")
     itens = mercado.painel_mercado()
     if not itens:
@@ -156,6 +175,7 @@ def _parametros():
     st.caption("Valores de referência. Selic, CDI, dólar, euro e cripto são buscados na internet "
                "(Banco Central / CoinGecko); os campos manuais valem quando não houver conexão.")
     campos = [
+        ("selic_manual", "Selic manual (% a.a.)"),
         ("cdi_anual_manual", "CDI anual manual (% a.a.)"),
         ("poupanca_mensal_manual", "Poupança mensal manual (% a.m.)"),
         ("usd_manual", "Dólar manual (R$)"), ("eur_manual", "Euro manual (R$)"),

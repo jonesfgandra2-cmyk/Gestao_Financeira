@@ -61,6 +61,13 @@ def render():
     alerta_cartao = db.get_config_float("alerta_cartao_pct_renda", 35)
 
     # ── Mercado ─────────────────────────────────────────────────────────
+    with c2:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        if st.button("🔄 Atualizar cotações", key="dash_atualizar_cot",
+                     help="Busca de novo no Banco Central e no CoinGecko (o painel guarda por 15 min)."):
+            mercado.resetar_falha()
+            _painel_mercado_cache.clear()
+            st.rerun()
     with st.container(border=True):
         itens = _painel_mercado_cache(db.get_config("painel_indices", ""), db.get_config("painel_moedas", ""),
                                       db.get_config("painel_criptos", ""))
