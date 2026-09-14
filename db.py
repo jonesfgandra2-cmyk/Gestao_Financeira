@@ -127,6 +127,8 @@ CREATE TABLE IF NOT EXISTS metas (
 CREATE TABLE IF NOT EXISTS benchmark (
     competencia TEXT NOT NULL, indice TEXT NOT NULL, valor REAL NOT NULL, origem TEXT,
     PRIMARY KEY (competencia, indice));
+CREATE TABLE IF NOT EXISTS mapa_import (
+    chave TEXT PRIMARY KEY, categoria_id INTEGER REFERENCES categorias(id));
 CREATE TABLE IF NOT EXISTS cotacoes (
     data TEXT NOT NULL, codigo TEXT NOT NULL, valor REAL NOT NULL, origem TEXT,
     PRIMARY KEY (data, codigo));
@@ -295,6 +297,43 @@ def add_fixo_tipo(nome, valor_previsto, dia):
 
 def set_fixo_tipo_ativo(id_, ativo):
     execute("UPDATE fixos_tipos SET ativo=? WHERE id=?", (int(ativo), id_))
+
+
+def atualizar_fixo_tipo(id_, nome, valor_previsto, dia, ativo):
+    execute("UPDATE fixos_tipos SET nome=?, valor_previsto=?, dia_vencimento=?, ativo=? WHERE id=?",
+            (str(nome).strip().upper(), float(valor_previsto or 0), int(dia or 1), int(bool(ativo)), int(id_)))
+
+
+def add_lancamento_fatura(data, cartao_id, estabelecimento, categoria_id, valor, competencia,
+                          parcela_num=1, parcelas=1, obs=None):
+    """Linha de fatura importada: a competencia e' a da fatura (nao a data da
+    compra) e a parcela vem como esta no extrato (2/5 = so esta parcela)."""
+    return execute("""INSERT INTO lancamentos (data, modalidade, cartao_id, estabelecimento, categoria_id,
+                      valor, parcela_num, parcelas, grupo_parcela, competencia, obs, criado_em)
+                      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   (str(data), "CARTAO", cartao_id, str(estabelecimento).strip(), categoria_id, float(valor),
+                    int(parcela_num or 1), int(parcelas or 1), None, competencia, obs, agora()))
+
+
+def mapa_import_get() -> dict:
+    df = query("SELECT m.chave, m.categoria_id FROM mapa_import m JOIN categorias c ON c.id=m.categoria_id")
+    return {r["chave"]: int(r["categoria_id"]) for _, r in df.iterrows()}
+
+
+def mapa_import_set(chave, categoria_id):
+    execute("INSERT INTO mapa_import (chave, categoria_id) VALUES (?,?) "
+            "ON CONFLICT(chave) DO UPDATE SET categoria_id=excluded.categoria_id", (chave, int(categoria_id)))
+
+
+def existe_lancamento(data, estabelecimento, valor) -> bool:
+    df = query("SELECT 1 FROM lancamentos WHERE data=? AND estabelecimento=? AND ABS(valor-?)<0.005 LIMIT 1",
+               (str(data), str(estabelecimento).strip(), float(valor)))
+    return not df.empty
+
+
+def existe_fixo_lancado(competencia, tipo_id) -> bool:
+    df = query("SELECT 1 FROM fixos_lancamentos WHERE competencia=? AND tipo_id=? LIMIT 1", (competencia, tipo_id))
+    return not df.empty
 
 
 def fixos_do_mes(competencia):
