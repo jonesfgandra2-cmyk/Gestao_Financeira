@@ -56,8 +56,9 @@ def _cotacoes():
     if c1.button("🔄 Testar agora", key="cfg_testar_cot"):
         mercado.resetar_falha()
         try:
-            v, d = mercado._sgs(mercado.SGS["selic"])
-            c2.success(f"Banco Central respondeu: Selic {v:.2f}% a.a. (vigente desde {d}).")
+            v, d = mercado._sgs(mercado.SGS["selic_efetiva"])
+            vm, dm = mercado._sgs(mercado.SGS["selic"])
+            c2.success(f"Banco Central respondeu: Selic efetiva {v:.2f}% a.a. ({d}) · meta {vm:.2f}% (desde {dm}).")
         except Exception as e:
             c2.error(f"Banco Central não respondeu: {type(e).__name__}: {str(e)[:200]}")
         try:
@@ -69,6 +70,16 @@ def _cotacoes():
     if erro:
         st.caption(f"Última falha de rede registrada: {erro}. Depois de uma falha o sistema espera 10 min "
                    "antes de tentar de novo — o botão acima força a tentativa.")
+
+    with st.expander("Como conferir os números", expanded=False):
+        st.markdown("""
+- **Selic efetiva** (série 1178 do BCB) é a taxa *realizada* no dia, normalmente 0,10 ponto abaixo da **meta**
+  do Copom (série 432). Use a efetiva para comparar rendimento; a meta é só referência.
+- **CDI (% a.a.)** é a série 4389. **CDI do mês** para o mês corrente é a CDI diária (série 12) acumulada do dia 1
+  até a última data disponível — a legenda diz quantos dias úteis entraram. Conferência rápida:
+  `CDI diária ≈ (1 + CDI a.a.)^(1/252) − 1`; com CDI de 13,90% a.a. dá ≈ 0,0517% ao dia, ou seja, 8 dias úteis ≈ 0,41%.
+- Para meses fechados o CDI do mês vem da série 4391 (acumulado oficial).
+""")
 
     st.markdown("**Prévia**")
     itens = mercado.painel_mercado()
